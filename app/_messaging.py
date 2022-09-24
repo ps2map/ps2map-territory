@@ -13,7 +13,7 @@ __all__ = [
 _Coro = collections.abc.Coroutine[None, None, None]
 # NOTE: Have to type callback arguments as Any as the actual messages will
 # have subtypes which would violate LSP
-Callback = typing.Callable[[typing.Any], _Coro | None]
+Callback = typing.Callable[[tuple[typing.Any, ...]], _Coro | None]
 
 _log = logging.getLogger('messaging')
 
