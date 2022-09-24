@@ -15,7 +15,7 @@ _Coro = collections.abc.Coroutine[None, None, None]
 # have subtypes which would violate LSP
 Callback = typing.Callable[[typing.Any], _Coro | None]
 
-_log = logging.getLogger('app.messaging')
+_log = logging.getLogger('messaging')
 
 
 class MessagingComponent:

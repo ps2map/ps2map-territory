@@ -11,7 +11,6 @@ from ._db_connector import DbConnector, DbInfo
 from ._state_manager import StateManager
 
 _log = logging.getLogger('app')
-_log.setLevel(logging.DEBUG)
 
 
 async def _load_servers(
@@ -49,7 +48,8 @@ async def main(db_info: DbInfo, service_id: str) -> None:
     async for server, namespace in _load_servers(conn):
         _log.debug('loaded server %d (%s)', server, namespace)
         sync = CensusSync(server, namespace, census_service_id=service_id,
-                          startup_zones=zones)
+                          startup_zones=zones, polling_interval=10.0,
+                          polling_timeout=15.0)
         sync.subscribe('map_poll', state.handle_map_poll)
 
     # TODO: Create websocket clients to improve map responsiveness and add
@@ -85,6 +85,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--db-pass', '-W', default=def_db_pass,
         help='Database password (default: %(default)s)')
+    parser.add_argument(
+        '--log-level', '-L', default='INFO',
+        help='Log level (default: %(default)s)')
     args = parser.parse_args()
 
     service_id = args.service_id
@@ -97,6 +100,12 @@ if __name__ == '__main__':
     )
 
     # Logging configuration
+    log_level = getattr(logging, args.log_level.upper(), None)
+    if log_level is None:
+        raise ValueError(f'invalid log level: {args.log_level}')
+    _log = logging.getLogger('app')
+    _log.setLevel(log_level)
+
     fmt = logging.Formatter(
         '%(asctime)s [%(levelname)s] %(name)s: %(message)s')
     fh_ = logging.FileHandler(filename='debug.log', encoding='utf-8')
