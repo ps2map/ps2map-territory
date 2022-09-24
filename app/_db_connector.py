@@ -6,6 +6,7 @@ No SQL outside of this module should be used in the application.
 import asyncio
 import collections.abc
 import contextlib
+import logging
 import typing
 
 import psycopg
@@ -22,6 +23,8 @@ _Connection = psycopg.AsyncConnection[tuple[typing.Any, ...]]
 _Cursor = psycopg.AsyncCursor[tuple[typing.Any, ...]]
 _Pool = psycopg_pool.AsyncConnectionPool
 _ConnectionContext = contextlib.AbstractAsyncContextManager[_Connection]
+
+_log = logging.getLogger('app.db')
 
 
 class DbInfo(typing.NamedTuple):
@@ -124,12 +127,22 @@ class DbConnector:
 
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.executemany(
-                    'UPDATE "API_dynamic"."BaseOwnership" '
-                    'SET "owning_faction_id" = %s, '
-                    '    "owned_since" = %s '
-                    'WHERE "base_id" = %s '
-                    '  AND "server_id" = %s',
-                    param_gen()
-                )
-            # await conn.commit()
+                for params in param_gen():
+                    try:
+                        await cur.execute(
+                            'INSERT INTO "API_dynamic"."BaseOwnership" '
+                            '("owning_faction_id", "owned_since", '
+                            ' "base_id", "server_id") '
+                            'VALUES (%s, %s, %s, %s) '
+                            'ON CONFLICT ("base_id", "server_id") '
+                            'DO UPDATE SET '
+                            ' "owning_faction_id" = EXCLUDED.owning_faction_id, '
+                            ' "owned_since" = EXCLUDED.owned_since',
+                            params
+                        )
+                    except psycopg.IntegrityError as err:
+                        await conn.rollback()
+                        _log.debug('failed to set facility %d on zone %d: %s',
+                                   params[2], zone_id, err)
+                    else:
+                        await conn.commit()
