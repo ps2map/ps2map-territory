@@ -1,31 +1,23 @@
-"""Standalone map state syncing using the Census API REST endpoint.
+"""Synchronisation component using the REST API census endpoint.
 
-This tool is designed to run in parallel to the real-time event monitor
-and detect changes to the map state that may have not made it through
-the event stream.
-
-It also doubles as a fallback for detecting continent locks and unlocks
-if the event stream is not sending `ContinentUnlock` events (as has
-been the case for years as of 2022-09-18).
+This provides the initial load of the map state when the stack is
+started, and also provides some resiliency against game server outages
+or the websocket API missing capture events (which allegedly happens).
 """
 
 import asyncio
+import collections.abc
 import logging
 import typing
 
 import aiohttp
-import auraxium
-import yarl
+import auraxium.census
 
 from ._messaging import MessagingComponent
 
 __all__ = [
     'CensusSync',
-    'MapPollPayload',
 ]
-
-MapPollPayload = typing.NamedTuple(
-    'MapPollPayload', world_id=int, zone_id=int, ownership=dict[int, int])
 
 _log = logging.getLogger('app.rest_syncer')
 
@@ -33,118 +25,124 @@ _log = logging.getLogger('app.rest_syncer')
 class CensusSync(MessagingComponent):
     """Component for synchronising the map state with the REST API.
 
-    After initialization, call the :meth:`start` method to commence
-    polling with the interval specified in the constructor.
-
-    Other components can subscribe to receive the polled data by
-    subscribing to the ``map_poll`` event.
-
-    Every combination of zone and world gets its own message. See the
-    :obj:`MapPollPayload` type for available fields.
+    Emits a `map_poll` event for each tracked zone on the given server
+    in regular intervals. New zones can be added at any time using the
+    :meth:`add_zone` method.
     """
 
-    def __init__(self, interval: float, service_id: str,
-                 worlds: list[int] = [], zones: list[int] = []) -> None:
-        if not worlds or not zones:
-            raise ValueError('worlds and zones must be non-empty')
+    def __init__(self, server_id: int, census_namespace: str = 'ps2',
+                 census_service_id: str = 's:example',
+                 startup_zones: collections.abc.Iterable[int] = (),
+                 polling_interval: float = 5.0,
+                 polling_timeout: float = 10.0) -> None:
         super().__init__()
 
-        self._poll_interval: float = interval
-        self._poll_task: asyncio.Task[None] | None = None
-        self._running: bool = False
-        self._worlds: list[int] = worlds
-        self._zones: list[int] = zones
-        self._query = self._get_map_query(service_id)
-
-    def _rest_received(self, map_data: MapPollPayload) -> None:
-        """Dispatch a message with the given map data."""
-        if self._running:
-            self.dispatch('map_poll', map_data)
-
-    def start(self) -> None:
-        """Start the map syncing loop.
-
-        Call :meth:`stop` to stop polling.
-        """
-        if not self._running:
-            _log.debug('starting map polling')
-            self._poll_task = asyncio.create_task(self._poll())
-        else:
-            _log.warning('map polling already running')
-        self._running = True
-
-    def stop(self) -> None:
-        """Stop the map syncing loop.
-
-        This will prevent any new loops from starting, but any
-        ongoing polling operations will still finish normally.
-        """
-        if self._running:
-            _log.debug('stopping map polling')
-            if self._poll_task is not None:
-                self._poll_task.cancel()
-                self._poll_task = None
-        else:
-            _log.warning('map polling not active')
-        self._running = False
-
-    def _build_payloads(self, world_id: int, data: dict[str, typing.Any],
-                        ) -> list[MapPollPayload]:
-        """Process the ps2/map response and generate the payloads.
-
-        Every zone is returned as a separate payload. Note that the
-        world ID must be specified beforehand as the payload does not
-        contain information about what game server it reports for.
-        """
-        payloads: list[MapPollPayload] = []
-        for map_ in data['map_list']:
-
-            # Extract facility ownership map
-            ownership: dict[int, int] = {}
-            for entry in map_['Regions']['Row']:
-                row_data = entry['RowData']
-                ownership[int(row_data['RegionId'])] = int(
-                    row_data['FactionId'])
-
-            payloads.append(
-                MapPollPayload(world_id, int(map_['ZoneId']), ownership))
-        return payloads
-
-    async def _fetch(self) -> None:
-        """Fetch the map state for all worlds and zones registered.
-
-        Worlds are polled separately but in parellel.
-        """
-
-        # NOTE: The "ps2/map" endpoint only supports querying a single world
-        # at a time. Additionally, its payload does not include the world ID,
-        # so we have to use closures to capture the world ID for each request.
-        zone_ids = ','.join(map(str, self._zones))
-
-        async def fetch_world(
-                world_id: int, session: aiohttp.ClientSession) -> None:
-            """Closure for keeping track of the current world_id."""
-            url = self._query.with_query(world_id=world_id, zone_ids=zone_ids)
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    _log.error('failed to fetch map state for world %d: %s',
-                               world_id, resp.status)
-                    return
-                for data in self._build_payloads(world_id, await resp.json()):
-                    self._rest_received(data)
+        # Create a sub-logger for this instance
+        self._log = logging.getLogger(f'{_log.name}.world_{server_id}')
+        self._namespace = census_namespace
+        self._polling_interval = polling_interval
+        self._polling_timeout = polling_timeout
+        self._server_id = server_id
+        self._service_id = census_service_id
+        self._zones: set[int] = set(startup_zones)
 
         try:
-            async with aiohttp.ClientSession() as session:
-                tasks = [fetch_world(w, session) for w in self._worlds]
-                await asyncio.gather(*tasks)
-        except Exception as err:
-            _log.exception('failed to fetch map state: %s', err)
+            loop = asyncio.get_running_loop()
+        except RuntimeError as err:
+            raise RuntimeError('Running event loop required') from err
+        loop.create_task(self._poll_hypervisor())
 
-    def _get_map_query(self, service_id: str) -> yarl.URL:
-        return auraxium.census.Query('map', service_id=service_id).url()
+    @property
+    def census_namespace(self) -> str:
+        return self._namespace
+
+    @property
+    def server_id(self) -> int:
+        return self._server_id
+
+    @property
+    def zones(self) -> set[int]:
+        return self._zones
+
+    def add_zone(self, zone_id: int) -> None:
+        """Add a zone to the list of tracked zones.
+
+        If zone already exists, do nothing.
+        """
+        self._zones.add(zone_id)
+
+    def remove_zone(self, zone_id: int) -> None:
+        """Remove a zone from the list of tracked zones.
+
+        If zone does not exist, do nothing.
+        """
+        self._zones.discard(zone_id)
+
+    @staticmethod
+    def _parse_map(json: dict[str, typing.Any]
+                   ) -> collections.abc.Iterator[tuple[int, dict[int, int]]]:
+        """Convert the Census API paylaod into a more compact map.
+
+        Returned dict is as {zone: {base: owning_faction}}.
+        """
+        for zone in json['map_list']:
+            zone_id = int(zone['ZoneId'])
+            ownership: dict[int, int] = {}
+            for row_data in (r['RowData'] for r in zone['Regions']['Row']):
+                region_id = int(row_data['RegionId'])
+                faction_id = int(row_data['FactionId'])
+                ownership[region_id] = faction_id
+            yield zone_id, ownership
 
     async def _poll(self) -> None:
+        """Poll the Census API for the current map state."""
+        if not self._zones:
+            self._log.info('no zones to poll for world %d', self._server_id)
+            return
+
+        # Generate the URL for the census endpoint
+        query = auraxium.census.Query(
+            'map', namespace=self._namespace,
+            service_id=self._service_id,
+            world_id=self._server_id,
+            zone_ids=','.join(map(str, self._zones)))
+        url = query.url(skip_checks=True)
+
+        # Fetch the map status for all tracked zones
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    self._log.warning('census query failed: %s', resp.status)
+                    return
+                data = await resp.json()
+        self._log.debug('census query returned %d rows', len(data))
+
+        # Emit a map_poll event for each zone
+        for zone_id, ownership in self._parse_map(data):
+            self._log.debug('zone %d: %r', zone_id, ownership)
+            self.dispatch('map_poll', (self._server_id, zone_id, ownership))
+
+    async def _poll_hypervisor(self) -> typing.NoReturn:
+        """Main polling loop.
+
+        Runs forever, or until its task is cancelled.
+        """
         while True:
-            _log.debug('polling map state')
-            asyncio.create_task(self._fetch())
-            await asyncio.sleep(self._poll_interval)
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._poll_wrapper(self._poll()))
+            await asyncio.sleep(self._polling_interval)
+
+    async def _poll_wrapper(self, coro: typing.Awaitable[None]) -> None:
+        """Error handling wrapper for the polling coroutine.
+
+        This silences and warns for polling timeouts, re-raises
+        CancelledError, and silences and logs all other exceptions.
+        """
+        try:
+            return await asyncio.wait_for(coro, self._polling_timeout)
+        except asyncio.TimeoutError:
+            self._log.warning('map polling timed out')
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            self._log.exception('exception ignored in map polling loop')
