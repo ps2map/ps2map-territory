@@ -119,7 +119,9 @@ class CensusSync(MessagingComponent):
 
         # Emit a map_poll event for each zone
         for zone_id, ownership in self._parse_map(data):
-            self._log.debug('zone %d: %r', zone_id, ownership)
+            self._log.debug(
+                'dispatching map_poll for server %d zone %d (%d bases)',
+                self._server_id, zone_id, len(ownership))
             self.dispatch('map_poll', (self._server_id, zone_id, ownership))
 
     async def _poll_hypervisor(self) -> typing.NoReturn:
