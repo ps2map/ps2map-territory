@@ -82,7 +82,11 @@ class MessagingComponent:
             subs = self.__subscriptions[event]
         except KeyError:
             subs = self.__subscriptions[event] = []
-        subs.append(callback)
+        if callback not in subs:
+            subs.append(callback)
+        else:
+            _log.info('ignoring duplicate subscription for message type: %s',
+                      event)
 
     def unsubscribe(self, event: str, callback: Callback) -> bool:
         """Remove a message subscription.
