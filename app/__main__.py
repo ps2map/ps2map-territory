@@ -9,6 +9,7 @@ import os
 from ._census_sync import CensusSync
 from ._db_connector import DbConnector, DbInfo
 from ._state_manager import StateManager
+from ._types import FacilityStatus
 
 _log = logging.getLogger('app')
 
@@ -42,6 +43,11 @@ async def main(db_info: DbInfo, service_id: str) -> None:
 
     # Creat main event dispatcher and state manager
     state = StateManager()
+
+    async def _map_update(
+            payload: tuple[int, int, dict[int, FacilityStatus]]) -> None:
+        await conn.sync_zone(*payload)
+    state.subscribe('map_update', _map_update)
 
     # Create a REST sync task for each server
     _log.info('loading tracked servers')
