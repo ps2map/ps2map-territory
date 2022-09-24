@@ -62,6 +62,8 @@ class MessagingComponent:
                 else:
                     loop.call_soon_threadsafe(callback, payload)
             except Exception as err:
+                if isinstance(err, KeyboardInterrupt):
+                    raise
                 _log.exception('error dispatching message: %s', err)
             else:
                 subs_notified += 1
