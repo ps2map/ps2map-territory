@@ -106,18 +106,20 @@ if __name__ == '__main__':
     )
 
     # Logging configuration
-    log_level = getattr(logging, args.log_level.upper(), None)
-    if log_level is None:
-        raise ValueError(f'invalid log level: {args.log_level}')
-    _log = logging.getLogger('app')
-    _log.setLevel(log_level)
-
     fmt = logging.Formatter(
         '%(asctime)s [%(levelname)s] %(name)s: %(message)s')
     fh_ = logging.FileHandler(filename='debug.log', encoding='utf-8')
     sh_ = logging.StreamHandler()
     fh_.setFormatter(fmt)
     sh_.setFormatter(fmt)
+
+    log_level = getattr(logging, args.log_level.upper(), None)
+    if log_level is None:
+        raise ValueError(f'invalid log level: {args.log_level}')
+    _log = logging.getLogger('app')
+    _log.setLevel(log_level)
+    _log.addHandler(fh_)
+    _log.addHandler(sh_)
 
     # SelectorEventLoop is required for psycopg database driver
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

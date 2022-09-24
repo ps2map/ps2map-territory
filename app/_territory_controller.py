@@ -44,11 +44,11 @@ class TerritoryController(MessagingComponent):
 
         changes = dict(self._facility_items() - facilities.items())
         if changes:
-            _log.debug('updating %d facilities in zone %d on server %d',
-                       len(changes), self._zone_id, self._server_id)
             for facility_id, faction_id in changes.items():
                 self._ownership[facility_id] = (faction_id, now)
                 self._outfits.pop(facility_id, None)
+            _log.info('updated %d facilities in zone %d on server %d',
+                      len(changes), self._zone_id, self._server_id)
 
         return len(changes)
 
