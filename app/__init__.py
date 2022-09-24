@@ -1,8 +1,7 @@
-"""Territory management component of the PS2Map backend."""
+"""Territory management component of the PS2Map backend.
 
-from ._census_sync import CensusSync
+This module does not expose any public API, it is only intended to be
+run via the __main__ module.
+"""
 
-__all__ = [
-    'CensusSync',
-]
 __version__ = '0.1.0'
