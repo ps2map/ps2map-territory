@@ -5,9 +5,11 @@ No SQL outside of this module should be used in the application.
 
 import asyncio
 import collections.abc
+import contextlib
 import typing
 
 import psycopg
+import psycopg_pool
 
 from ._types import FacilityStatus, Timestamp
 
@@ -18,6 +20,8 @@ __all__ = [
 
 _Connection = psycopg.AsyncConnection[tuple[typing.Any, ...]]
 _Cursor = psycopg.AsyncCursor[tuple[typing.Any, ...]]
+_Pool = psycopg_pool.AsyncConnectionPool
+_ConnectionContext = contextlib.AbstractAsyncContextManager[_Connection]
 
 
 class DbInfo(typing.NamedTuple):
@@ -38,7 +42,7 @@ class DbConnector:
     """
 
     def __init__(self, db_info: DbInfo) -> None:
-        self._conn: _Connection | None = None
+        self._pool: _Pool | None = None
         self._ready = asyncio.Event()
 
         try:
@@ -48,12 +52,13 @@ class DbConnector:
         loop.create_task(self._connect(db_info))
 
     @property
-    def _cursor(self) -> collections.abc.Coroutine[None, None, _Cursor]:
+    def _connection(
+            self) -> collections.abc.Coroutine[None, None, _ConnectionContext]:
         """Property shorthand for getting a cursor."""
-        async def _wrapper() -> _Cursor:
+        async def _wrapper() -> _ConnectionContext:
             await self._ready.wait()
-            assert self._conn is not None
-            return self._conn.cursor()
+            assert self._pool is not None
+            return self._pool.connection()
         return _wrapper()
 
     async def _connect(self, db_info: DbInfo) -> None:
@@ -68,58 +73,63 @@ class DbConnector:
                     f'user={db_info.user} '
                     f'password={db_info.password} '
                     f'dbname={db_info.database}')
-        self._conn = await psycopg.AsyncConnection.connect(conn_str)
+        self._pool = _Pool(conn_str)
+        await self._pool.wait()
         self._ready.set()
 
     async def fetch_namespace(self, server_id: int) -> str | None:
         """Retrieve the Census API namespace for a given server."""
-        async with await self._cursor as cur:
-            await cur.execute(
-                'SELECT "census_namespace" '
-                'FROM "API_static"."Server" '
-                'WHERE "id" = %s',
-                (server_id,)
-            )
-            namespace = await cur.fetchone()
-            return namespace[0] if namespace is not None else None
+        async with await self._connection as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    'SELECT "census_namespace" '
+                    'FROM "API_static"."Server" '
+                    'WHERE "id" = %s',
+                    (server_id,)
+                )
+                namespace = await cur.fetchone()
+                return namespace[0] if namespace is not None else None
 
     async def fetch_servers(self) -> list[int]:
         """Fetch all tracked servers from the database."""
-        async with await self._cursor as cur:
-            await cur.execute(
-                'SELECT "id" '
-                'FROM "API_static"."Server" '
-                'WHERE "tracking_enabled" = TRUE'
-            )
-            return [row[0] for row in await cur.fetchall()]
+        async with await self._connection as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    'SELECT "id" '
+                    'FROM "API_static"."Server" '
+                    'WHERE "tracking_enabled" = TRUE'
+                )
+                return [row[0] for row in await cur.fetchall()]
 
     async def fetch_zones(self) -> list[int]:
         """Fetch all static zones from the database."""
-        async with await self._cursor as cur:
-            await cur.execute(
-                'SELECT "id" '
-                'FROM "API_static"."Continent" '
-                'WHERE "hidden" = FALSE'
-            )
-            return [row[0] for row in await cur.fetchall()]
+        async with await self._connection as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    'SELECT "id" '
+                    'FROM "API_static"."Continent" '
+                    'WHERE "hidden" = FALSE'
+                )
+                return [row[0] for row in await cur.fetchall()]
 
     async def sync_zone(self, server_id: int, zone_id: int,
                         zone_data: dict[int, FacilityStatus]) -> None:
 
         # Generator for the SQL query items
         def param_gen() -> typing.Iterator[
-                tuple[int, int, int, int, Timestamp, int | None]]:
+                tuple[int, Timestamp, int, int]]:
             for facility_id, status in zone_data.items():
-                yield (server_id, zone_id, facility_id, status.current_faction,
-                       status.last_capture, status.last_capture_by)
+                yield (status.current_faction, status.last_capture,
+                       facility_id, server_id)
 
-        async with await self._cursor as cur:
-            await cur.executemany(
-                'UPDATE "API_dynamic"."BaseOwnership"'
-                'SET "owning_faction_id" = %s,'
-                '    "owned_since" = %s'
-                'WHERE "server_id" = %s'
-                '  AND "base_id" = %s',
-                # TODO: Hacky compatibility wrapper with old DB schema
-                [(f, cap, w, b) for (w, _, b, f, cap, _) in param_gen()]
-            )
+        async with await self._connection as conn:
+            async with conn.cursor() as cur:
+                await cur.executemany(
+                    'UPDATE "API_dynamic"."BaseOwnership" '
+                    'SET "owning_faction_id" = %s, '
+                    '    "owned_since" = %s '
+                    'WHERE "base_id" = %s '
+                    '  AND "server_id" = %s',
+                    param_gen()
+                )
+            # await conn.commit()
