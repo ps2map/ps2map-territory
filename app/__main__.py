@@ -53,7 +53,7 @@ async def main(db_info: DbInfo, service_id: str) -> None:
     _log.info('loading tracked servers')
     async for server, namespace in _load_servers(conn):
         _log.debug('loaded server %d (%s)', server, namespace)
-        sync = CensusSync(server, namespace, census_service_id=service_id,
+        sync = CensusSync((server, namespace), census_service_id=service_id,
                           startup_zones=zones, polling_interval=10.0,
                           polling_timeout=15.0)
         sync.subscribe('map_poll', state.handle_map_poll)

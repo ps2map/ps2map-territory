@@ -14,6 +14,7 @@ import aiohttp
 import auraxium.census
 
 from ._messaging import MessagingComponent
+from ._types import ServerInfo
 
 __all__ = [
     'CensusSync',
@@ -30,7 +31,7 @@ class CensusSync(MessagingComponent):
     :meth:`add_zone` method.
     """
 
-    def __init__(self, server_id: int, census_namespace: str = 'ps2',
+    def __init__(self, server_info: ServerInfo,
                  census_service_id: str = 's:example',
                  startup_zones: collections.abc.Iterable[int] = (),
                  polling_interval: float = 5.0,
@@ -38,11 +39,11 @@ class CensusSync(MessagingComponent):
         super().__init__()
 
         # Create a sub-logger for this instance
-        self._log = logging.getLogger(f'{_log.name}.world_{server_id}')
-        self._namespace = census_namespace
+        self._log = logging.getLogger(f'{_log.name}.world_{server_info[0]}')
+
         self._polling_interval = polling_interval
         self._polling_timeout = polling_timeout
-        self._server_id = server_id
+        self._server_info = server_info
         self._service_id = census_service_id
         self._zones: set[int] = set(startup_zones)
 
@@ -54,11 +55,11 @@ class CensusSync(MessagingComponent):
 
     @property
     def census_namespace(self) -> str:
-        return self._namespace
+        return self._server_info[1]
 
     @property
     def server_id(self) -> int:
-        return self._server_id
+        return self._server_info[0]
 
     @property
     def zones(self) -> set[int]:
@@ -97,15 +98,14 @@ class CensusSync(MessagingComponent):
     async def _poll(self) -> None:
         """Poll the Census API for the current map state."""
         if not self._zones:
-            self._log.info('no zones to poll for world %d', self._server_id)
+            self._log.info('no zones to poll for world %d', self.server_id)
             return
 
         # Generate the URL for the census endpoint
+        id_, namespace = self._server_info
         query = auraxium.census.Query(
-            'map', namespace=self._namespace,
-            service_id=self._service_id,
-            world_id=self._server_id,
-            zone_ids=','.join(map(str, self._zones)))
+            'map', namespace=namespace, service_id=self._service_id,
+            world_id=id_, zone_ids=','.join(map(str, self._zones)))
         url = query.url(skip_checks=True)
 
         # Fetch the map status for all tracked zones
@@ -121,8 +121,8 @@ class CensusSync(MessagingComponent):
         for zone_id, ownership in self._parse_map(data):
             self._log.debug(
                 'dispatching map_poll for server %d zone %d (%d bases)',
-                self._server_id, zone_id, len(ownership))
-            self.dispatch('map_poll', (self._server_id, zone_id, ownership))
+                self.server_id, zone_id, len(ownership))
+            self.dispatch('map_poll', (self.server_id, zone_id, ownership))
 
     async def _poll_hypervisor(self) -> typing.NoReturn:
         """Main polling loop.
