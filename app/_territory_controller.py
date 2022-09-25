@@ -42,7 +42,7 @@ class TerritoryController(MessagingComponent):
             self._ownership = {k: (v, now) for k, v in facilities.items()}
             return len(self._ownership)
 
-        changes = dict(self._facility_items() - facilities.items())
+        changes = dict(facilities.items() - self._facility_items())
         if changes:
             for facility_id, faction_id in changes.items():
                 self._ownership[facility_id] = (faction_id, now)
