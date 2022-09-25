@@ -115,7 +115,6 @@ class CensusSync(MessagingComponent):
                     self._log.warning('census query failed: %s', resp.status)
                     return
                 data = await resp.json()
-        self._log.debug('census query returned %d rows', len(data))
 
         # Emit a map_poll event for each zone
         for zone_id, ownership in self._parse_map(data):
