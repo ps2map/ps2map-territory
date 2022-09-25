@@ -10,6 +10,7 @@ import logging
 import typing
 
 import psycopg
+import psycopg.sql
 import psycopg_pool
 
 from ._types import FacilityStatus, Timestamp
@@ -19,8 +20,7 @@ __all__ = [
     'DbInfo',
 ]
 
-_Connection = psycopg.AsyncConnection[tuple[typing.Any, ...]]
-_Cursor = psycopg.AsyncCursor[tuple[typing.Any, ...]]
+_Connection = psycopg.AsyncConnection[typing.Any]
 _Pool = psycopg_pool.AsyncConnectionPool
 _ConnectionContext = contextlib.AbstractAsyncContextManager[_Connection]
 
@@ -82,37 +82,39 @@ class DbConnector:
 
     async def fetch_namespace(self, server_id: int) -> str | None:
         """Retrieve the Census API namespace for a given server."""
+        sql = psycopg.sql.SQL(
+            'SELECT "census_namespace" '
+            'FROM "API_static"."Server" '
+            'WHERE "id" = %s'
+        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    'SELECT "census_namespace" '
-                    'FROM "API_static"."Server" '
-                    'WHERE "id" = %s',
-                    (server_id,)
-                )
+                await cur.execute(sql, (server_id,))  # type: ignore
                 namespace = await cur.fetchone()
                 return namespace[0] if namespace is not None else None
 
     async def fetch_servers(self) -> list[int]:
         """Fetch all tracked servers from the database."""
+        sql = psycopg.sql.SQL(
+            'SELECT "id" '
+            'FROM "API_static"."Server" '
+            'WHERE "tracking_enabled" = TRUE'
+        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    'SELECT "id" '
-                    'FROM "API_static"."Server" '
-                    'WHERE "tracking_enabled" = TRUE'
-                )
+                await cur.execute(sql)  # type: ignore
                 return [row[0] for row in await cur.fetchall()]
 
     async def fetch_zones(self) -> list[int]:
         """Fetch all static zones from the database."""
+        sql = psycopg.sql.SQL(
+            'SELECT "id" '
+            'FROM "API_static"."Continent" '
+            'WHERE "hidden" = FALSE'
+        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.execute(
-                    'SELECT "id" '
-                    'FROM "API_static"."Continent" '
-                    'WHERE "hidden" = FALSE'
-                )
+                await cur.execute(sql)  # type: ignore
                 return [row[0] for row in await cur.fetchall()]
 
     async def sync_zone(self, server_id: int, zone_id: int,
@@ -125,21 +127,21 @@ class DbConnector:
                 yield (status.current_faction, status.last_capture,
                        facility_id, server_id)
 
+        sql = psycopg.sql.SQL(
+            'INSERT INTO "API_dynamic"."BaseOwnership" '
+            '("owning_faction_id", "owned_since", '
+            ' "base_id", "server_id") '
+            'VALUES (%s, %s, %s, %s) '
+            'ON CONFLICT ("base_id", "server_id") '
+            'DO UPDATE SET '
+            ' "owning_faction_id" = EXCLUDED.owning_faction_id, '
+            ' "owned_since" = EXCLUDED.owned_since'
+        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
                 for params in param_gen():
                     try:
-                        await cur.execute(
-                            'INSERT INTO "API_dynamic"."BaseOwnership" '
-                            '("owning_faction_id", "owned_since", '
-                            ' "base_id", "server_id") '
-                            'VALUES (%s, %s, %s, %s) '
-                            'ON CONFLICT ("base_id", "server_id") '
-                            'DO UPDATE SET '
-                            ' "owning_faction_id" = EXCLUDED.owning_faction_id, '
-                            ' "owned_since" = EXCLUDED.owned_since',
-                            params
-                        )
+                        await cur.execute(sql, params)  # type: ignore
                     except psycopg.IntegrityError as err:
                         await conn.rollback()
                         _log.debug('failed to set facility %d on zone %d: %s',
