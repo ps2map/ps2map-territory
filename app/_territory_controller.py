@@ -6,13 +6,14 @@ import logging
 from ._messaging import MessagingComponent
 from ._types import FacilityStatus, Timestamp
 
-_log = logging.getLogger('app')
-
 
 class TerritoryController(MessagingComponent):
     """Territory controller for a given zone and server."""
 
     def __init__(self, server_id: int, zone_id: int) -> None:
+        self._log = logging.getLogger(
+            f'app.server_{server_id}.territory_zone_{zone_id}')
+
         self._server_id = server_id
         self._zone_id = zone_id
         self._ownership: dict[int, tuple[int, Timestamp]] = {}
@@ -37,8 +38,7 @@ class TerritoryController(MessagingComponent):
         now = datetime.datetime.utcnow()
 
         if not self._ownership:
-            _log.info('initialising map for zone %d on server %d',
-                      self._zone_id, self._server_id)
+            self._log.info('initialising map for zone')
             self._ownership = {k: (v, now) for k, v in facilities.items()}
             return len(self._ownership)
 
@@ -47,8 +47,7 @@ class TerritoryController(MessagingComponent):
             for facility_id, faction_id in changes.items():
                 self._ownership[facility_id] = (faction_id, now)
                 self._outfits.pop(facility_id, None)
-            _log.info('updated %d facilities in zone %d on server %d',
-                      len(changes), self._zone_id, self._server_id)
+            self._log.info('updated ownership of %d facilities', len(changes))
 
         return len(changes)
 

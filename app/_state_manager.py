@@ -1,7 +1,11 @@
 """Global state manager and event dispatcher."""
 
+import logging
+
 from ._messaging import MessagingComponent
 from ._territory_controller import TerritoryController
+
+_log = logging.getLogger('app')
 
 
 class StateManager(MessagingComponent):
@@ -13,12 +17,13 @@ class StateManager(MessagingComponent):
 
     def __init__(self) -> None:
         super().__init__()
-        self._zone_controllers: dict[tuple[int, int], TerritoryController] = {}
+        self._territory: dict[tuple[int, int], TerritoryController] = {}
 
     def handle_map_poll(
             self, payload: tuple[int, int, dict[int, int]]) -> None:
         server_id, zone_id, facilities = payload
         controller = self._get_controller(server_id, zone_id)
+
         count = controller.update_ownership(facilities)
         if count > 0:
             self.emit('map_update', controller.map_status)
@@ -31,7 +36,8 @@ class StateManager(MessagingComponent):
         instance will be spun up and returned.
         """
         key = server_id, zone_id
-        if key not in self._zone_controllers:
-            self._zone_controllers[key] = TerritoryController(
-                server_id, zone_id)
-        return self._zone_controllers[key]
+        if key not in self._territory:
+            _log.info('Creating new territory controller for zone %d on '
+                      'server %d', zone_id, server_id)
+            self._territory[key] = TerritoryController(server_id, zone_id)
+        return self._territory[key]

@@ -20,8 +20,6 @@ __all__ = [
     'CensusSync',
 ]
 
-_log = logging.getLogger('app.rest_syncer')
-
 
 class CensusSync(MessagingComponent):
     """Component for synchronising the map state with the REST API.
@@ -37,25 +35,20 @@ class CensusSync(MessagingComponent):
                  polling_interval: float = 5.0,
                  polling_timeout: float = 10.0) -> None:
         super().__init__()
+        self._log = logging.getLogger(f'app.server_{server_info[0]}.rest_sync')
+        self._server_info = server_info
+        self._zones: set[int] = set(startup_zones)
 
-        # Create a sub-logger for this instance
-        self._log = logging.getLogger(f'{_log.name}.world_{server_info[0]}')
-
+        self._service_id = census_service_id
         self._polling_interval = polling_interval
         self._polling_timeout = polling_timeout
-        self._server_info = server_info
-        self._service_id = census_service_id
-        self._zones: set[int] = set(startup_zones)
 
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError as err:
             raise RuntimeError('Running event loop required') from err
         loop.create_task(self._poll_hypervisor())
-
-    @property
-    def census_namespace(self) -> str:
-        return self._server_info[1]
+        self._log.info('census API sync polling started')
 
     @property
     def server_id(self) -> int:
@@ -70,6 +63,8 @@ class CensusSync(MessagingComponent):
 
         If zone already exists, do nothing.
         """
+        if zone_id not in self._zones:
+            self._log.info('zone %d added', zone_id)
         self._zones.add(zone_id)
 
     def remove_zone(self, zone_id: int) -> None:
@@ -77,6 +72,8 @@ class CensusSync(MessagingComponent):
 
         If zone does not exist, do nothing.
         """
+        if zone_id not in self._zones:
+            self._log.info('zone %d removed', zone_id)
         self._zones.discard(zone_id)
 
     @staticmethod
@@ -98,7 +95,7 @@ class CensusSync(MessagingComponent):
     async def _poll(self) -> None:
         """Poll the Census API for the current map state."""
         if not self._zones:
-            self._log.info('no zones to poll for world %d', self.server_id)
+            self._log.debug('no zones to poll')
             return
 
         # Generate the URL for the census endpoint
@@ -112,15 +109,14 @@ class CensusSync(MessagingComponent):
         async with aiohttp.ClientSession() as session:
             async with session.get(url) as resp:
                 if resp.status != 200:
-                    self._log.warning('census query failed: %s', resp.status)
+                    self._log.warning(
+                        'API query failed with status %d', resp.status)
                     return
                 data = await resp.json()
 
         # Emit a map_poll event for each zone
         for zone_id, ownership in self._parse_map(data):
-            self._log.debug(
-                'dispatching map_poll for server %d zone %d (%d bases)',
-                self.server_id, zone_id, len(ownership))
+            self._log.debug('emitting map_poll message for zone %d', zone_id)
             self.emit('map_poll', (self.server_id, zone_id, ownership))
 
     async def _poll_hypervisor(self) -> typing.NoReturn:
@@ -142,7 +138,8 @@ class CensusSync(MessagingComponent):
         try:
             return await asyncio.wait_for(coro, self._polling_timeout)
         except asyncio.TimeoutError:
-            self._log.warning('map polling timed out')
+            self._log.warning('map polling timed out after %.1f seconds',
+                              self._polling_timeout)
         except asyncio.CancelledError:
             raise
         except Exception:
