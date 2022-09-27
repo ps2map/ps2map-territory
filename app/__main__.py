@@ -55,7 +55,8 @@ async def main(db_info: DbInfo, service_id: str) -> None:
     async for server_info in _load_servers(conn):
         _log.debug('loaded server %d (%s)', *server_info)
         sync = CensusSync(server_info, census_service_id=service_id,
-                          startup_zones=zones)
+                          startup_zones=zones, polling_interval=10.0,
+                          polling_timeout=18.0)
         sync.subscribe('map_poll', state.handle_map_poll)
 
         listener = EventListener(server_info, census_service_id=service_id,
