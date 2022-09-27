@@ -45,6 +45,7 @@ class DbConnector:
     """
 
     def __init__(self, db_info: DbInfo) -> None:
+        self._base_cache: dict[int, int] = {}
         self._pool: _Pool | None = None
         self._ready = asyncio.Event()
 
@@ -79,6 +80,30 @@ class DbConnector:
         self._pool = _Pool(conn_str)
         await self._pool.wait()
         self._ready.set()
+
+    async def base_from_facility(self, facility_id: int) -> int | None:
+        """Fetch the base ID for a given facility ID.
+
+        This method is cached and will return immediately if the given
+        facility ID has already been looked up.
+        """
+        if facility_id in self._base_cache:
+            return self._base_cache[facility_id]
+
+        sql = psycopg.sql.SQL(
+            'SELECT "id" '
+            'FROM "API_static"."Base" '
+            'WHERE "facility_id" = %s'
+        )
+        async with await self._connection as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(sql, (facility_id,))  # type: ignore
+                base_id = await cur.fetchone()
+
+        if base_id is not None:
+            self._base_cache[facility_id] = base_id[0]
+            return base_id[0]
+        return None
 
     async def fetch_namespace(self, server_id: int) -> str | None:
         """Retrieve the Census API namespace for a given server."""
