@@ -11,8 +11,6 @@ __all__ = [
 ]
 
 _Coro = collections.abc.Coroutine[None, None, None]
-# NOTE: Have to type callback arguments as Any as the actual messages will
-# have subtypes which would violate LSP
 Callback = typing.Callable[[tuple[typing.Any, ...]], _Coro | None]
 
 _log = logging.getLogger('messaging')
@@ -22,18 +20,18 @@ class MessagingComponent:
     """Base class for message-based application components.
 
     External callers can subscribe to messages using the
-    :meth:`subscribe` method. The :meth:`dispatch` method can be used
-    by subclasses to send messages to all subscribers of that
-    particular message type.
+    :meth:`subscribe` method. The :meth:`emit` method can be used by
+    subclasses to send messages to all subscribers of that particular
+    topic.
 
-    Any logging messages are sent to the ``app.messaging`` logger.
+    Any logging messages are sent to the `messaging` logger.
     """
 
     def __init__(self) -> None:
         self.__subscriptions: dict[str, list[Callback]] = {}
 
-    def dispatch(self, event: str, payload: typing.Any) -> None:
-        """Dispatch a payload to all subscribers of that message type.
+    def emit(self, topic: str, payload: typing.Any) -> None:
+        """Dispatch a payload to all subscribers of the given topic.
 
         This method is intended to be called by subclasses or other
         external components, the latter is primarily useful for
@@ -43,7 +41,7 @@ class MessagingComponent:
         ignored. If you need to handle exceptions, wrap the exceptional
         parts of the callback itself.
 
-        :param event: The message type to dispatch.
+        :param topic: Topic under which to emit the given payload.
         :param payload: The message payload to dispatch.
         """
         try:
@@ -52,7 +50,7 @@ class MessagingComponent:
             raise RuntimeError('dispatch requires event loop') from err
 
         subs_notified = 0
-        for callback in self.__subscriptions.get(event, []):
+        for callback in self.__subscriptions.get(topic, []):
 
             # Catch-all for exceptions in callbacks to avoid escalating
             # them to the dispatching code
@@ -64,46 +62,49 @@ class MessagingComponent:
             except Exception as err:
                 if isinstance(err, KeyboardInterrupt):
                     raise
-                _log.exception('error dispatching message: %s', err)
+                _log.exception('exception ignored in callback for topic %s:',
+                               topic, err)
             else:
                 subs_notified += 1
 
-        _log.debug('dispatched message to %d subscribers', subs_notified)
+        _log.debug('dispatched payload for topic %s to %d subscribers',
+                   topic, subs_notified)
 
-    def subscribe(self, event: str, callback: Callback) -> None:
+    def subscribe(self, topic: str, callback: Callback) -> None:
         """Add a message subscription.
 
         Any time a message with the given type is dispatched, the
         given callback will be invoked via the asyncio event loop. The
         callback may be a coroutine function or a regular function.
 
-        :param event: The message type to subscribe to.
-        :param callback: The callback to invoke.
+        :param topic: Topic under which to emit the given payload.
+        :param callback: The callback to invoke when a message is
+            dispatched under the given topic.
         """
         try:
-            subs = self.__subscriptions[event]
+            subs = self.__subscriptions[topic]
         except KeyError:
-            subs = self.__subscriptions[event] = []
+            subs = self.__subscriptions[topic] = []
         if callback not in subs:
             subs.append(callback)
         else:
             _log.info('ignoring duplicate subscription for message type: %s',
-                      event)
+                      topic)
 
-    def unsubscribe(self, event: str, callback: Callback) -> bool:
+    def unsubscribe(self, topic: str, callback: Callback) -> bool:
         """Remove a message subscription.
 
         Removes a callback from the list of subscribers for the given
         message type. If none are found, no error is raised, but False
         is returned instead.
 
-        :param event: The message type to unsubscribe from.
+        :param topic: Topic under which the callback is registered.
         :param callback: The callback to remove.
         :return: True if the callback was found and removed, False
             otherwise.
         """
         try:
-            subs = self.__subscriptions[event]
+            subs = self.__subscriptions[topic]
         except KeyError:
             return False
         try:
@@ -112,10 +113,10 @@ class MessagingComponent:
             return False
         return True
 
-    def unsubscribe_all(self, event: str) -> int:
+    def unsubscribe_all(self, topic: str) -> int:
         """Remove all message subscriptions for a given message type.
 
-        :param event: The message type to unsubscribe from.
+        :param topic: Topic whose subscriptions should be removed.
         :return: The number of subscriptions removed.
         """
-        return len(self.__subscriptions.pop(event, []))
+        return len(self.__subscriptions.pop(topic, []))

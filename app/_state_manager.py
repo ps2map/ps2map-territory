@@ -21,7 +21,7 @@ class StateManager(MessagingComponent):
         controller = self._get_controller(server_id, zone_id)
         count = controller.update_ownership(facilities)
         if count > 0:
-            self.dispatch('map_update', controller.map_status)
+            self.emit('map_update', controller.map_status)
 
     def _get_controller(
             self, server_id: int, zone_id: int) -> TerritoryController:

@@ -121,7 +121,7 @@ class CensusSync(MessagingComponent):
             self._log.debug(
                 'dispatching map_poll for server %d zone %d (%d bases)',
                 self.server_id, zone_id, len(ownership))
-            self.dispatch('map_poll', (self.server_id, zone_id, ownership))
+            self.emit('map_poll', (self.server_id, zone_id, ownership))
 
     async def _poll_hypervisor(self) -> typing.NoReturn:
         """Main polling loop.
