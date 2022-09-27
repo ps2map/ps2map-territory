@@ -149,7 +149,7 @@ class DbConnector:
         def param_gen() -> typing.Iterator[
                 tuple[int, Timestamp, int, int]]:
             for facility_id, status in zone_data.items():
-                yield (status.current_faction, status.last_capture,
+                yield (status.faction_id, status.last_secured,
                        facility_id, server_id)
 
         sql = psycopg.sql.SQL(

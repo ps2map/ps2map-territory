@@ -15,9 +15,9 @@ Timestamp = datetime.datetime
 class FacilityStatus(typing.NamedTuple):
     """Facility status information."""
 
-    current_faction: int
-    last_capture: Timestamp
-    last_capture_by: int | None
+    faction_id: int
+    last_secured: Timestamp
+    owning_outfit_id: int | None
 
 
 class ServerInfo(typing.NamedTuple):
