@@ -6,6 +6,10 @@ import logging
 from ._messaging import MessagingComponent
 from ._types import FacilityStatus, Timestamp
 
+__all__ = [
+    'TerritoryController',
+]
+
 
 class TerritoryController(MessagingComponent):
     """Territory controller for a given zone and server."""
@@ -18,6 +22,16 @@ class TerritoryController(MessagingComponent):
         self._zone_id = zone_id
         self._ownership: dict[int, tuple[int, Timestamp]] = {}
         self._outfits: dict[int, int] = {}
+
+    @property
+    def server_id(self) -> int:
+        """Return the server ID of the instance."""
+        return self._server_id
+
+    @property
+    def zone_id(self) -> int:
+        """Return the zone ID of the instance."""
+        return self._zone_id
 
     @property
     def map_status(self) -> tuple[int, int, dict[int, FacilityStatus]]:

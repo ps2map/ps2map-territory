@@ -8,6 +8,7 @@ import os
 
 from ._census_sync import CensusSync
 from ._db_connector import DbConnector, DbInfo
+from ._realtime import EventListener
 from ._state_manager import StateManager
 from ._types import FacilityStatus, ServerInfo
 
@@ -56,6 +57,20 @@ async def main(db_info: DbInfo, service_id: str) -> None:
         sync = CensusSync(server_info, census_service_id=service_id,
                           startup_zones=zones)
         sync.subscribe('map_poll', state.handle_map_poll)
+
+        listener = EventListener(server_info, census_service_id=service_id,
+                                 startup_zones=zones)
+
+        async def _wrap_listener(payload: tuple[int, int, int, FacilityStatus]) -> None:
+            server, zone, facility, status = payload
+            base = await conn.base_from_facility(facility)
+            if base is None:
+                _log.warning('unable to find base for facility %d', facility)
+                return
+
+            payload = server, zone, base, status
+            state.handle_map_update(payload)
+        listener.subscribe('map_update', _wrap_listener)
 
 
 if __name__ == '__main__':
