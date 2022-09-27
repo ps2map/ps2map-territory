@@ -9,13 +9,13 @@ import os
 from ._census_sync import CensusSync
 from ._db_connector import DbConnector, DbInfo
 from ._state_manager import StateManager
-from ._types import FacilityStatus
+from ._types import FacilityStatus, ServerInfo
 
 _log = logging.getLogger('app')
 
 
 async def _load_servers(
-        conn: DbConnector) -> collections.abc.AsyncIterator[tuple[int, str]]:
+        conn: DbConnector) -> collections.abc.AsyncIterator[ServerInfo]:
     """Load the list of tracked game servers and namespaces.
 
     This first retrieves any tracked game servers from the database,
@@ -29,7 +29,7 @@ async def _load_servers(
         if namespace is None:
             _log.warning('no namespace found for server: %d', server_id)
         else:
-            yield server_id, namespace
+            yield ServerInfo(server_id, namespace)
 
 
 async def main(db_info: DbInfo, service_id: str) -> None:
@@ -51,15 +51,11 @@ async def main(db_info: DbInfo, service_id: str) -> None:
 
     # Create a REST sync task for each server
     _log.info('loading tracked servers')
-    async for server, namespace in _load_servers(conn):
-        _log.debug('loaded server %d (%s)', server, namespace)
-        sync = CensusSync((server, namespace), census_service_id=service_id,
-                          startup_zones=zones, polling_interval=10.0,
-                          polling_timeout=15.0)
+    async for server_info in _load_servers(conn):
+        _log.debug('loaded server %d (%s)', *server_info)
+        sync = CensusSync(server_info, census_service_id=service_id,
+                          startup_zones=zones)
         sync.subscribe('map_poll', state.handle_map_poll)
-
-    # TODO: Create websocket clients to improve map responsiveness and add
-    # resiliency for REST API outages
 
 
 if __name__ == '__main__':
