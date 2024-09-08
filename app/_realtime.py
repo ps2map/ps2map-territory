@@ -53,10 +53,12 @@ class EventListener(MessagingComponent):
 
     @property
     def server_id(self) -> int:
-        return self._server_info[0]
+        """Return the ID of the server being tracked."""
+        return self._server_info.id
 
     @property
     def zones(self) -> set[int]:
+        """Return the zones being tracked on this server."""
         return self._zones
 
     def add_zone(self, zone_id: int) -> None:

@@ -15,6 +15,7 @@ class TerritoryController(MessagingComponent):
     """Territory controller for a given zone and server."""
 
     def __init__(self, server_id: int, zone_id: int) -> None:
+        super().__init__()
         self._log = logging.getLogger(
             f'app.server_{server_id}.territory_zone_{zone_id}')
 
@@ -49,7 +50,7 @@ class TerritoryController(MessagingComponent):
         facility owners and the current owners. Any changes will be
         updated as captured at the current time, with no outfit.
         """
-        now = datetime.datetime.utcnow()
+        now = datetime.datetime.now(datetime.UTC)
 
         if not self._ownership:
             self._log.info('initialising map for zone')

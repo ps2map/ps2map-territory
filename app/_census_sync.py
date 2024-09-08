@@ -52,10 +52,12 @@ class CensusSync(MessagingComponent):
 
     @property
     def server_id(self) -> int:
-        return self._server_info[0]
+        """Return the ID of the server being tracked."""
+        return self._server_info.id
 
     @property
     def zones(self) -> set[int]:
+        """Return the zones being tracked on this server."""
         return self._zones
 
     def add_zone(self, zone_id: int) -> None:
@@ -140,7 +142,7 @@ class CensusSync(MessagingComponent):
         except asyncio.TimeoutError:
             self._log.warning('map polling timed out after %.1f seconds',
                               self._polling_timeout)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
+        except asyncio.CancelledError as err:
+            raise err from err
+        except Exception:  # pylint: disable=broad-except
             self._log.exception('exception ignored in map polling loop')

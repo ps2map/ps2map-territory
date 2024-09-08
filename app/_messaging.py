@@ -59,10 +59,10 @@ class MessagingComponent:
                     loop.create_task(callback(payload))
                 else:
                     loop.call_soon_threadsafe(callback, payload)
-            except Exception as err:
+            except Exception as err:  # pylint: disable=broad-except
                 if isinstance(err, KeyboardInterrupt):
                     raise
-                _log.exception('exception ignored in callback for topic %s:',
+                _log.exception('exception ignored in callback for topic %s: %s',
                                topic, err)
             else:
                 subs_notified += 1

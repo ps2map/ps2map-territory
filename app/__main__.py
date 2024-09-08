@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import collections.abc
 import logging
+import platform
 import os
 
 from ._census_sync import CensusSync
@@ -34,6 +35,7 @@ async def _load_servers(
 
 
 async def main(db_info: DbInfo, service_id: str) -> None:
+    """Async equivalent of the __main__ clause."""
     _log.info('starting up')
 
     # Create the database connector and wait for it to be ready
@@ -76,68 +78,71 @@ async def main(db_info: DbInfo, service_id: str) -> None:
 
 if __name__ == '__main__':
     # Load DB connection info defaults from environment variables
-    def_service_id = os.getenv('PS2MAP_SERVICE_ID', 's:example')
-    def_db_host = os.getenv('PS2MAP_DB_HOST', 'localhost')
-    def_db_port = int(os.getenv('PS2MAP_DB_PORT', 5432))
-    def_db_name = os.getenv('PS2MAP_DB_NAME', 'postgres')
-    def_db_user = os.getenv('PS2MAP_DB_USER', 'postgres')
-    def_db_pass = os.getenv('PS2MAP_DB_PASS')
+    _def_service_id = os.getenv('PS2MAP_SERVICE_ID', 's:example')
+    _def_db_host = os.getenv('PS2MAP_DB_HOST', 'localhost')
+    _def_db_port = int(os.getenv('PS2MAP_DB_PORT', '5432'))
+    _def_db_name = os.getenv('PS2MAP_DB_NAME', 'postgres')
+    _def_db_user = os.getenv('PS2MAP_DB_USER', 'postgres')
+    _def_db_pass = os.getenv('PS2MAP_DB_PASS')
 
     # Optionally overload defaults via command line
-    parser = argparse.ArgumentParser(__doc__)
-    parser.add_argument(
-        '--service-id', '-S', default=def_service_id,
+    _parser = argparse.ArgumentParser(__doc__)
+    _parser.add_argument(
+        '--service-id', '-S', default=_def_service_id,
         help='Service ID for this instance (default: %(default)s)')
-    parser.add_argument(
-        '--db-host', '-H', default=def_db_host,
+    _parser.add_argument(
+        '--db-host', '-H', default=_def_db_host,
         help='Database host (default: %(default)s)')
-    parser.add_argument(
-        '--db-port', '-P', type=int, default=def_db_port,
+    _parser.add_argument(
+        '--db-port', '-P', type=int, default=_def_db_port,
         help='Database port (default: %(default)s)')
-    parser.add_argument(
-        '--db-name', '-D', default=def_db_name,
+    _parser.add_argument(
+        '--db-name', '-D', default=_def_db_name,
         help='Database name (default: %(default)s)')
-    parser.add_argument(
-        '--db-user', '-U', default=def_db_user,
+    _parser.add_argument(
+        '--db-user', '-U', default=_def_db_user,
         help='Database user (default: %(default)s)')
-    parser.add_argument(
-        '--db-pass', '-W', default=def_db_pass,
+    _parser.add_argument(
+        '--db-pass', '-W', default=_def_db_pass,
         help='Database password (default: %(default)s)')
-    parser.add_argument(
+    _parser.add_argument(
         '--log-level', '-L', default='INFO',
         help='Log level (default: %(default)s)')
-    args = parser.parse_args()
+    _args = _parser.parse_args()
 
-    service_id = args.service_id
-    db_info = DbInfo(
-        host=args.db_host,
-        port=args.db_port,
-        database=args.db_name,
-        user=args.db_user,
-        password=args.db_pass,
+    _service_id = _args.service_id
+    _db_info = DbInfo(
+        host=_args.db_host,
+        port=_args.db_port,
+        database=_args.db_name,
+        user=_args.db_user,
+        password=_args.db_pass,
     )
 
     # Logging configuration
-    fmt = logging.Formatter(
+    _fmt = logging.Formatter(
         '%(asctime)s [%(levelname)s] %(name)s: %(message)s')
-    fh_ = logging.FileHandler(filename='debug.log', encoding='utf-8')
-    sh_ = logging.StreamHandler()
-    fh_.setFormatter(fmt)
-    sh_.setFormatter(fmt)
+    _fh = logging.FileHandler(filename='debug.log', encoding='utf-8')
+    _sh = logging.StreamHandler()
+    _fh.setFormatter(_fmt)
+    _sh.setFormatter(_fmt)
 
-    log_level = getattr(logging, args.log_level.upper(), None)
-    if log_level is None:
-        raise ValueError(f'invalid log level: {args.log_level}')
+    _log_level = getattr(logging, _args.log_level.upper(), None)
+    if _log_level is None:
+        raise ValueError(f'invalid log level: {_args.log_level}')
     _log = logging.getLogger('app')
-    _log.setLevel(log_level)
-    _log.addHandler(fh_)
-    _log.addHandler(sh_)
+    _log.setLevel(_log_level)
+    _log.addHandler(_fh)
+    _log.addHandler(_sh)
 
     # SelectorEventLoop is required for psycopg database driver
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    if platform.system() == 'Windows':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy()) # type: ignore
+    else:
+        asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.create_task(main(db_info, service_id))
+    _loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(_loop)
+    _loop.create_task(main(_db_info, _service_id))
 
-    loop.run_forever()
+    _loop.run_forever()
