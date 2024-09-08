@@ -25,9 +25,9 @@ async def _load_servers(
     PC servers, this will be `ps2`, the PS4 servers have their own
     namespaces.
     """
-    servers = await conn.fetch_servers()
+    servers = await conn.fetch_worlds()
     for server_id in servers:
-        namespace = await conn.fetch_namespace(server_id)
+        namespace = await conn.get_namespace(server_id)
         if namespace is None:
             _log.warning('no namespace found for server: %d', server_id)
         else:
@@ -66,9 +66,9 @@ async def main(db_info: DbInfo, service_id: str) -> None:
 
         async def _wrap_listener(payload: tuple[int, int, int, FacilityStatus]) -> None:
             server, zone, facility, status = payload
-            base = await conn.base_from_facility(facility)
+            base = await conn.map_region_from_facility(facility)
             if base is None:
-                _log.warning('unable to find base for facility %d', facility)
+                _log.warning('unable to find map_region for facility %d', facility)
                 return
 
             payload = server, zone, base, status

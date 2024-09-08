@@ -13,6 +13,8 @@ import psycopg
 import psycopg.sql
 import psycopg_pool
 
+from .sql import (GET_MAP_REGION_FROM_FACILITY, GET_PLATFORM_FROM_WORLD,
+                  GET_WORLD_ALL_TRACKED, GET_ZONE_ALL_TRACKED, UPDATE_MAP_STATE)
 from ._types import FacilityStatus, Timestamp
 
 __all__ = [
@@ -81,7 +83,7 @@ class DbConnector:
         await self._pool.wait()
         self._ready.set()
 
-    async def base_from_facility(self, facility_id: int) -> int | None:
+    async def map_region_from_facility(self, facility_id: int) -> int | None:
         """Fetch the base ID for a given facility ID.
 
         This method is cached and will return immediately if the given
@@ -90,14 +92,9 @@ class DbConnector:
         if facility_id in self._base_cache:
             return self._base_cache[facility_id]
 
-        sql = psycopg.sql.SQL(
-            'SELECT "id" '
-            'FROM "API_static"."Base" '
-            'WHERE "facility_id" = %s'
-        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql, (facility_id,))  # type: ignore
+                await cur.execute(GET_MAP_REGION_FROM_FACILITY, (facility_id,))  # type: ignore
                 base_id = await cur.fetchone()
 
         if base_id is not None:
@@ -105,68 +102,50 @@ class DbConnector:
             return base_id[0]
         return None
 
-    async def fetch_namespace(self, server_id: int) -> str | None:
+    async def get_namespace(self, server_id: int) -> str | None:
         """Retrieve the Census API namespace for a given server."""
-        sql = psycopg.sql.SQL(
-            'SELECT "census_namespace" '
-            'FROM "API_static"."Server" '
-            'WHERE "id" = %s'
-        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql, (server_id,))  # type: ignore
+                await cur.execute(GET_PLATFORM_FROM_WORLD, (server_id,))  # type: ignore
                 namespace = await cur.fetchone()
-                return namespace[0] if namespace is not None else None
+        if namespace is None:
+            return None
+        platform, region = namespace
+        if platform == 'pc':
+            return 'ps2'
+        if platform == 'ps4':
+            return 'ps2ps4us' if region == 'us' else 'ps2ps4eu'
+        return None
 
-    async def fetch_servers(self) -> list[int]:
+    async def fetch_worlds(self) -> list[int]:
         """Fetch all tracked servers from the database."""
-        sql = psycopg.sql.SQL(
-            'SELECT "id" '
-            'FROM "API_static"."Server" '
-            'WHERE "tracking_enabled" = TRUE'
-        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql)  # type: ignore
+                await cur.execute(GET_WORLD_ALL_TRACKED)  # type: ignore
                 return [row[0] for row in await cur.fetchall()]
 
     async def fetch_zones(self) -> list[int]:
         """Fetch all static zones from the database."""
-        sql = psycopg.sql.SQL(
-            'SELECT "id" '
-            'FROM "API_static"."Continent" '
-            'WHERE "hidden" = FALSE'
-        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
-                await cur.execute(sql)  # type: ignore
+                await cur.execute(GET_ZONE_ALL_TRACKED)  # type: ignore
                 return [row[0] for row in await cur.fetchall()]
 
-    async def sync_zone(self, server_id: int, zone_id: int,
+    async def sync_zone(self, world_id: int, zone_id: int,
                         zone_data: dict[int, FacilityStatus]) -> None:
 
         # Generator for the SQL query items
         def param_gen() -> typing.Iterator[
-                tuple[int, Timestamp, int, int]]:
+                tuple[int, int, int, bool, int, int, Timestamp]]:
             for facility_id, status in zone_data.items():
-                yield (status.faction_id, status.last_secured,
-                       facility_id, server_id)
+                yield (facility_id, world_id, zone_id, True, status.faction_id,
+                       status.owning_outfit_id or 0, status.last_secured)
 
-        sql = psycopg.sql.SQL(
-            'INSERT INTO "API_dynamic"."BaseOwnership" '
-            '("owning_faction_id", "owned_since", '
-            ' "base_id", "server_id") '
-            'VALUES (%s, %s, %s, %s) '
-            'ON CONFLICT ("base_id", "server_id") '
-            'DO UPDATE SET '
-            ' "owning_faction_id" = EXCLUDED.owning_faction_id, '
-            ' "owned_since" = EXCLUDED.owned_since'
-        )
         async with await self._connection as conn:
             async with conn.cursor() as cur:
                 for params in param_gen():
                     try:
-                        await cur.execute(sql, params)  # type: ignore
+                        await cur.execute(UPDATE_MAP_STATE, params)  # type: ignore
                     except psycopg.IntegrityError as err:
                         await conn.rollback()
                         _log.debug('failed to set facility %d on zone %d: %s',
